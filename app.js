@@ -19,7 +19,7 @@ app.use(bodyParser.urlencoded({extended: true}));
 app.set('trust proxy', 1) // trust first proxy
 
 app.use(session({
-  secret: "Our little secret.",
+  secret: process.env.SECRET,
   resave: false,
   saveUninitialized: false,
 }));
