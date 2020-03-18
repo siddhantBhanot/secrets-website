@@ -5,10 +5,10 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
-const saltRounds = 10;
-// const md5 = require("md5");
-// const encrypt = require("mongoose-encryption");
+const session = require("express-session");
+const passport = require("passport");
+const passportLocalMongoose = require("passport-local-mongoose");
+
 
 const app = express();
 
@@ -16,24 +16,35 @@ app.use(express.static("public"));
 app.set("view engine", "ejs");
 app.use(bodyParser.urlencoded({extended: true}));
 
+app.set('trust proxy', 1) // trust first proxy
+
+app.use(session({
+  secret: "Our little secret.",
+  resave: false,
+  saveUninitialized: false,
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
 mongoose.connect('mongodb://localhost/userDB', {useNewUrlParser: true, useUnifiedTopology: true})
     .then(() => console.log('MongoDB Connected...'))
     .catch((err) => console.log(err));
+
+mongoose.set("useCreateIndex", true);
 
 const userSchema = new mongoose.Schema({
   email: String,
   password: String
 });
 
-// The below code will encrypt the whole database
-// userSchema.plugin(encrypt, {secret: secret});
-// This one will encrypt only the password field defined in userSchema
-// userSchema.plugin(encrypt, {secret: process.env.SECRET, encryptedFields : ["password"]});
-
+userSchema.plugin(passportLocalMongoose);
 
 const User = new mongoose.model("User", userSchema);
 
-
+passport.use(User.createStrategy());
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
 
 app.get("/", function(req, res) {
   res.render("home");
@@ -47,46 +58,62 @@ app.get("/register", function(req, res) {
   res.render("register");
 });
 
-
-app.post("/register", function(req, res) {
-
-  bcrypt.hash(req.body.password, saltRounds, function(err, hash) {
-
-    const newUser = new User({
-      email: req.body.username,
-      password: hash
-    });
-    newUser.save(function(err) {
-      if(err)
-        console.log(err);
-      else
-        //Rendering the secrets page after regestering and not directly for .get method
-        res.render("secrets");
-    });
-
-  });
+// Will check if a user is authenticated to access the secrets page ie, if they are logged in or not
+app.get("/secrets", function(req, res) {
+  if(req.isAuthenticated()) {
+    res.render("secrets");
+  }
+  else {
+    res.redirect("/login");
+  }
 });
 
-app.post("/login", function(req, res) {
-  const username = req.body.username;
-  const password = req.body.password;
+//logout route will deAuthenticate users and the session
+app.get("/logout", function(req, res) {
+  req.logout(); //passport's logout function
+  res.redirect("/");
+});
 
-  User.findOne({email: username}, function(err, foundUser) {
+
+//Register the user user with field active set to false
+// and try to authenticate this user in a second step by redirecting to secrets page
+app.post("/register", function(req, res) {
+  User.register({username: req.body.username}, req.body.password, function(err, user) {
     if(err)
+    {
       console.log(err);
+      res.redirect("/register");
+    }
     else {
-      if(foundUser) {
-        bcrypt.compare(password, foundUser.password, function(err, result) {
-          if(result === true)
-            //rendering the secrets method after login and not directly from .get method
-            res.render("secrets");
-        });
-      }
+      passport.authenticate("local")(req, res, function() {
+        //callback when authentication is successful
+        res.redirect("/secrets"); //here we are not rendering a secrets page but redirecting
+      });
     }
   });
 });
 
+app.post("/login", function(req, res) {
+  const user = new User({
+    username: req.body.username,
+    password: req.body.password
+  });
 
+  // using passport's login() method
+  req.login(user, function(err) {
+    if(err)
+      console.log(err);
+    else {
+      passport.authenticate("local")(req, res, function() {
+        res.redirect("/secrets"); //here we are not rendering a secrets page but redirecting
+      });
+    }
+  })
+});
+
+// both in register and login we create a cookie, save the cookie in the user's browser
+// and redirect the user to secrets page where the user makes a get request and sends the cookie
+// (just made) for authentication.
 
 
 app.listen(3000, function() {
